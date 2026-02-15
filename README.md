@@ -1,135 +1,108 @@
 # Weave - Visual AI Workflow Builder
+Live Application: [Click Here to Open App](https://siddharthgalxyassignment.vercel.app/)  
+Repository: [GitHub](https://github.com/Siddharth-Nama/flytbase-assessment) (Note: Replace with actual repo if different)
 
-A pixel-perfect clone of [Weavy.ai](https://weavy.ai) — a visual workflow builder for LLM-powered automations. Built with React Flow, Google Gemini AI, and Trigger.dev.
+## Overview
+Welcome to my submission for the Galaxy.AI Assessment. I have engineered **Weave**, a high-performance **Visual AI Workflow Builder** that transforms complex LLM operations into intuitive, drag-and-drop flowcharts.
 
-![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)
-![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)
-![React Flow](https://img.shields.io/badge/React_Flow-12-purple)
-![Trigger.dev](https://img.shields.io/badge/Trigger.dev-Enabled-green)
-
-
-**Watch the Demo:** [Click here to watch on Loom](https://www.loom.com/share/49a6cdb5c53449bd82d7528752ee976c)
-
----
-
-## Table of Contents
-
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
-- [Environment Variables](#environment-variables)
-- [Project Structure](#project-structure)
-- [Documentation](#documentation)
-- [License](#license)
-- [Connect with me](#connect-with-me)
-
----
-
-## Features
-
-- **Visual Workflow Canvas** — React Flow with drag & drop, panning, zooming, and minimap
-- **6 Node Types** — Text, Image Upload, Video Upload, LLM, Crop Image, Extract Frame
-- **AI-Powered Execution** — Google Gemini API with vision support
-- **Background Processing** — All node executions via Trigger.dev tasks (No client-side API calls)
-- **Workflow History** — Full execution history with node-level details
-- **Real-time Status** — Pulsating glow effect on running nodes
-- **Parallel Execution** — Independent branches run concurrently via Trigger.dev
-- **Media Processing** — Cloud-native video processing with **FFmpeg** on Trigger.dev
-- **File Uploads** — Secure, scalable uploads via **Transloadit**
-- **Authentication** — Clerk-powered user authentication
-- **Data Persistence** — PostgreSQL with Prisma ORM
+This project goes beyond a basic CRUD application—it is a full-featured **AI Orchestration Platform**. It integrates an infinite canvas (React Flow), multi-modal AI processing (Google Gemini), and serverless background execution (Trigger.dev) to simulate a professional enterprise automation environment. I built this to handle the "power user" workflow of designing, executing, and monitoring complex AI tasks with an emphasis on **Architectural Purity** and **Real-time Feedback**.
 
 ## Tech Stack
+- **Frontend**: **Next.js 16 (App Router)** for a reliable, high-speed UI with Server Components.
+- **Visual Canvas**: **React Flow** for interactive node-based workflow planning.
+- **AI Engine**: **Google Gemini API** for multi-modal (text, image, video) processing.
+- **Background Jobs**: **Trigger.dev** for serverless, reliable, and long-running task execution.
+- **Styling**: **Tailwind CSS** for a modern, responsive, and maintainable design system.
+- **Database**: **PostgreSQL** (via Neon/Supabase) with **Prisma ORM** for type-safe data access.
+- **State Management**: **Zustand** for performant, client-side state handling.
+- **Authentication**: **Clerk** for secure user management.
 
-| Category | Technology |
-|----------|------------|
-| Framework | Next.js 16 (App Router) |
-| Language | TypeScript |
-| UI Library | React 19, React Flow |
-| Styling | Tailwind CSS |
-| State | Zustand |
-| Database | PostgreSQL + Prisma |
-| Auth | Clerk |
-| AI | Google Gemini API |
-| Background Jobs | Trigger.dev |
-| Validation | Zod |
+## Why This Project Stands Out?
 
-## Getting Started
+### Architectural Purity: Strict Separation of Concerns
+The system is designed with a clear boundary between the visual interface and the execution logic. The frontend handles the canvas state and user interactions, while **Trigger.dev** handles the heavy lifting of AI processing in the background. This ensures the UI remains responsive even during complex, long-running AI tasks.
 
-### Prerequisites
+### "Command Center" UI
+Unlike generic dashboards, Weave offers a **Tactical Workspace**:
+- **Infinite Canvas**: Drag, drop, and connect nodes to build complex logic.
+- **Real-time Status**: Nodes glow and pulse to indicate execution state (Waiting, Running, Completed, Failed).
+- **History Tracking**: every execution is logged, allowing users to audit and debug their workflows.
 
-- Node.js 18+
-- PostgreSQL database ([Neon](https://neon.tech) or [Supabase](https://supabase.com))
-- [Clerk](https://clerk.com) account
-- [Google AI Studio](https://aistudio.google.com) API key
-- [Trigger.dev](https://trigger.dev) account
+### Advanced AI Integration
+- **Multi-Modal Support**: The system isn't limited to text. It handles **Images** and **Video** inputs, processing them via Gemini's vision capabilities.
+- **Server-Side Validation**: All inputs are validated with **Zod** schemas before execution, ensuring data integrity.
 
-### Installation
+### Implementation Details
 
-```bash
-# Clone the repository
-git clone https://github.com/TuShArBhArDwA/weavy-clone.git
-cd weavy-clone
+#### Core Features
+- **Visual Workflow Builder**:
+  - Drag-and-drop interface for 6+ node types (LLM, Text, Image, Video, Crop, Extract).
+  - Dynamic connection validation.
+- **Execution Engine**:
+  - **Parallel Execution**: Independent branches run concurrently.
+  - **Resiliency**: Trigger.dev ensures tasks are retried on failure.
+- **Media Processing**:
+  - Integration with **FFmpeg** for video frame extraction and manipulation.
+  - Secure file uploads via **Transloadit**.
 
-# Install dependencies
-npm install
+#### Technical Highlights
+- **Optimized Rendering**: Strategic use of `React.memo` and `useCallback` to prevent unnecessary re-renders on the canvas.
+- **Type Safety**: End-to-end TypeScript coverage from the database (Prisma) to the frontend components.
 
-# Set up environment variables
-cp .env.example .env
-# Fill in your API keys in .env (see .env.example for detailed instructions)
+## Candidate Profile: Siddharth Nama
+> "I don't just write code; I build solutions that scale."
 
-# Push database schema
-npx prisma db push
+Hello! I'm **Siddharth Nama**, a passionate Software Engineer Intern from Kota, India. I thrive on solving complex backend challenges and crafting seamless user experiences. My journey involves:
 
-# Run development server
-npm run dev
+- Spearheading "Suvidha Manch" at the Haryana Government (C4GT), where I helped digitize 25,000+ roads.
+- Optimizing performance at Mercato Agency, creating systems that handle 10,000+ users with ease.
+- Driving innovation with AI-powered platforms like Scripty and AiProgress.
+- Leading teams and delivering results under pressure, from managing election portals to restocking systems.
 
-# (In a separate terminal) Run Trigger.dev
-npm run trigger:dev
-```
+I am fit for this role because I combine strong technical fundamentals (Django, React, Systems Design) with an ownership mindset. I treat every assignment like a production release—focusing on edge cases, maintainability, and user impact. I am ready to bring this energy and precision to the team!
 
-Open [http://localhost:3000](http://localhost:3000) to view the app.
+**Let's Connect:**
+- [LinkedIn](https://www.linkedin.com/in/siddharth-nama)
+- [GitHub](https://github.com/Siddharth-Nama)
+- **Phone**: +91-8000694996
 
-## Environment Variables
+## Setup Instructions
 
-See [`.env.example`](.env.example) for detailed setup instructions.
+### Backend & Frontend Setup
+This project uses a unified Next.js repository structure.
 
-| Variable | Description | Get it from |
-|----------|-------------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string | [Neon](https://neon.tech) |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk publishable key | [Clerk](https://clerk.com) |
-| `CLERK_SECRET_KEY` | Clerk secret key | [Clerk](https://clerk.com) |
-| `GEMINI_API_KEY` | Google Gemini API key | [Google AI Studio](https://aistudio.google.com) |
-| `TRIGGER_SECRET_KEY` | Trigger.dev secret key | [Trigger.dev](https://trigger.dev) |
-| `NEXT_PUBLIC_TRANSLOADIT_AUTH_KEY` | Transloadit Auth Key | [Transloadit](https://transloadit.com) |
-| `NEXT_PUBLIC_TRANSLOADIT_TEMPLATE_ID` | Transloadit Template ID | [Transloadit](https://transloadit.com) |
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/Siddharth-Nama/weavy-clone.git
+    cd weavy-clone
+    ```
 
-## Project Structure
+2.  **Install dependencies:**
+    ```bash
+    npm install
+    ```
 
-```
-src/
-├── app/                 # Next.js App Router pages
-├── components/          # React components
-│   └── workflow/        # Workflow canvas & nodes
-├── lib/                 # Utilities & types
-├── store/               # Zustand state management
-├── trigger/             # Trigger.dev background tasks
-└── prisma/              # Database schema
-```
+3.  **Configure Environment:**
+    Copy `.env.example` to `.env` and fill in your API keys (Clerk, Database, Gemini, Trigger.dev).
+    ```bash
+    cp .env.example .env
+    ```
 
-## Documentation
+4.  **Initialize Database:**
+    ```bash
+    npx prisma db push
+    ```
 
-| Document | Description |
-|----------|-------------|
-| [High-Level Design (HLD)](docs/HLD.md) | System architecture, components, and data flow |
-| [Low-Level Design (LLD)](docs/LLD.md) | Database schema, API endpoints, and execution flow |
+5.  **Run Development Server:**
+    ```bash
+    npm run dev
+    ```
 
-## License
+6.  **Start Background Worker:**
+    In a separate terminal:
+    ```bash
+    npm run trigger:dev
+    ```
 
-MIT License - see [LICENSE](LICENSE) file for details.
-
-## Connect with me
-
-If you'd like to connect, feel free to reach out — [Click here](https://minianonlink.vercel.app/tusharbhardwaj)
+---
+© 2026 Developed by **Siddharth Nama**

@@ -1,255 +1,77 @@
 # Low-Level Design (LLD)
 
-## 1. Database Schema
+## 1. Data Schema Design (PostgreSQL)
 
-### Users Table
-```sql
-CREATE TABLE users (
-  id VARCHAR(255) PRIMARY KEY,  -- Clerk user ID
-  email VARCHAR(255) UNIQUE NOT NULL,
-  first_name VARCHAR(255),
-  last_name VARCHAR(255),
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
-);
-```
+The database schema is designed for **referential integrity** and **scalability**, leveraging PostgreSQL's advanced features.
 
-### Workflows Table
-```sql
-CREATE TABLE workflows (
-  id SERIAL PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
-  data JSONB NOT NULL,           -- React Flow nodes & edges
-  user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
-);
-```
+### Core Tables
 
-### Workflow Runs Table
-```sql
-CREATE TABLE workflow_runs (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  workflow_id INTEGER REFERENCES workflows(id) ON DELETE CASCADE,
-  trigger_type VARCHAR(50) DEFAULT 'MANUAL',
-  status VARCHAR(50) NOT NULL,   -- PENDING, RUNNING, COMPLETED, FAILED
-  started_at TIMESTAMP DEFAULT NOW(),
-  finished_at TIMESTAMP
-);
-```
+#### `users`
+-   **Primary Key**: `id` (Managed by Clerk Auth)
+-   **Purpose**: Stores minimal user profile data, synced from Clerk webhooks.
+-   **Indexes**: `email` (Unique) for rapid lookups.
 
-### Node Executions Table
-```sql
-CREATE TABLE node_executions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  run_id UUID REFERENCES workflow_runs(id) ON DELETE CASCADE,
-  node_id VARCHAR(255) NOT NULL,
-  node_type VARCHAR(255) NOT NULL,
-  node_label VARCHAR(255),
-  status VARCHAR(50) NOT NULL,
-  input_data JSONB,
-  output_data JSONB,
-  error TEXT,
-  started_at TIMESTAMP DEFAULT NOW(),
-  finished_at TIMESTAMP,
-  duration INTEGER               -- milliseconds
-);
-```
+#### `workflows`
+-   **Primary Key**: `id` (Serial Integer)
+-   **Foreign Key**: `user_id` -> `users(id)` (ON DELETE CASCADE)
+-   **Purpose**: Stores the JSON representation of the React Flow graph.
+-   **Note**: The JSON `data` column is treated as an opaque blob by the DB but strictly typed in the application layer via Zod schemas.
 
-## 2. Node Types
+#### `workflow_runs`
+-   **Primary Key**: `id` (UUID) - Ensures globally unique identifiers for distributed tracing.
+-   **Foreign Key**: `workflow_id` -> `workflows(id)`
+-   **Status Enum**: `PENDING` | `RUNNING` | `COMPLETED` | `FAILED`
+-   **Purpose**: Represents a single instance of a workflow execution. It tracks the overall lifecycle and duration.
 
-### Text Node
+#### `node_executions`
+-   **Primary Key**: `id` (UUID)
+-   **Foreign Key**: `run_id` -> `workflow_runs(id)`
+-   **Purpose**: Granular tracking of individual node operations. Stores input/output payloads as JSONB for flexibility across different node types (LLM, Image, Text).
+
+## 2. Type System Strategy (TypeScript)
+
+We employ a **Shared Type Definition** strategy to ensure consistency between the Frontend, Backend, and Database.
+
+### Node Interface Definitions
+Each node type implements a strict interface to guarantee runtime safety:
+
+-   **`LLMNodeData`**: Defines the structure for AI interactions, including `model` selection, `systemPrompt`, and `userMessage`.
+-   **`ImageNodeData`**: Handles image references, either via URL or Base64, with strict status tracking (`idle` -> `loading` -> `success`).
+-   **`CropNodeData`**: Stores normalized coordinate data (percentages) to ensure crop operations are resolution-independent.
+
+### Zod Schemas
+Runtime validation is enforced using **Zod**. Every API endpoint validates incoming requests against these schemas before processing:
 ```typescript
-interface TextNodeData {
-  label: string;
-  text: string;
-  status: 'idle' | 'success';
-}
-// Output Handle: "output" (text string)
-```
-
-### Image Node
-```typescript
-interface ImageNodeData {
-  label: string;
-  file?: { url: string; name: string; type: string };
-  image?: string;  // Demo image URL
-  status: 'idle' | 'loading' | 'success' | 'error';
-  errorMessage?: string;
-}
-// Output Handle: "output" (image URL/base64)
-```
-
-### LLM Node
-```typescript
-interface LLMNodeData {
-  label: string;
-  model: string;         // e.g., "gemini-1.5-flash"
-  systemPrompt?: string;
-  userMessage?: string;
-  response?: string;
-  status: 'idle' | 'loading' | 'success' | 'error';
-}
-// Input Handles: "system_prompt", "user_message", "images"
-// Output Handle: "output" (LLM response text)
-```
-
-### Crop Image Node
-```typescript
-interface CropNodeData {
-  label: string;
-  x_percent: number;      // 0-100
-  y_percent: number;      // 0-100
-  width_percent: number;  // 0-100
-  height_percent: number; // 0-100
-  status: 'idle' | 'loading' | 'success' | 'error';
-}
-// Input Handle: "image_url"
-// Output Handle: "output" (cropped image URL)
-```
-
-### Extract Frame Node
-```typescript
-interface ExtractFrameNodeData {
-  label: string;
-  timestamp: string;  // seconds or "50%"
-  status: 'idle' | 'loading' | 'success' | 'error';
-}
-// Input Handle: "video_url"
-// Input Handle: "video_url"
-// Output Handle: "output" (extracted frame URL)
-
-### Video Upload Node
-```typescript
-interface VideoNodeData {
-  label: string;
-  file?: { url: string; name: string; type: string };
-  status: 'idle' | 'uploading' | 'success' | 'error';
-}
-// Output Handle: "video_url"
-```
-```
-
-## 3. Trigger.dev Tasks
-
-### LLM Execution Task
-```typescript
-export const llmTask = task({
-  id: "llm-execution",
-  run: async (payload: {
-    model: string;
-    systemPrompt?: string;
-    userMessage: string;
-    images?: string[];
-  }) => {
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-    const model = genAI.getGenerativeModel({ model: payload.model });
-    
-    const parts = [];
-    if (payload.systemPrompt) parts.push({ text: payload.systemPrompt });
-    parts.push({ text: payload.userMessage });
-    
-    if (payload.images) {
-      for (const img of payload.images) {
-        parts.push({ inlineData: { mimeType: "image/jpeg", data: img } });
-      }
-    }
-    
-    const result = await model.generateContent(parts);
-    return { response: result.response.text() };
-  }
+export const CreateWorkflowSchema = z.object({
+  name: z.string().min(1),
+  nodes: z.array(NodeSchema),
+  edges: z.array(EdgeSchema),
 });
 ```
 
-### Workflow Orchestrator
-```typescript
-export const orchestratorTask = task({
-  id: "workflow-orchestrator",
-  run: async (payload: { workflowId: number; runId: string }) => {
-    // 1. Load workflow from database
-    // 2. Build dependency graph from edges
-    // 3. Execute nodes in topological order
-    // 4. Trigger parallel tasks for independent nodes
-    // 5. Collect results and update database
-  }
-});
-```
+## 3. Serverless Task Implementation (Trigger.dev)
 
-## 4. State Management (Zustand)
+### The Orchestrator Pattern
+Instead of a monolithic "worker loop," we use an event-driven orchestrator:
+1.  **Trigger**: Receives `run_id`.
+2.  **Hydrate**: Fetches workflow graph from DB.
+3.  **Topological Sort**: Determines the execution order based on dependencies.
+4.  **Parallel Dispatch**: Identifies nodes that can run simultaneously and dispatches them as separate sub-tasks.
+5.  **Aggregation**: Waits for results and updates the `node_executions` table.
 
-```typescript
-interface WorkflowStore {
-  // State
-  nodes: Node[];
-  edges: Edge[];
-  selectedNodes: string[];
-  
-  // Actions
-  addNode: (type: string, position: XYPosition) => void;
-  updateNodeData: (nodeId: string, data: Partial<NodeData>) => void;
-  deleteNode: (nodeId: string) => void;
-  onNodesChange: (changes: NodeChange[]) => void;
-  onEdgesChange: (changes: EdgeChange[]) => void;
-  onConnect: (connection: Connection) => void;
-  
-  // Execution
-  runWorkflow: () => Promise<void>;
-  runSelectedNodes: () => Promise<void>;
-}
-```
+### Task Isolation
+Each critical operation is wrapped in a dedicated Trigger.dev task:
+-   **`llm-execution`**: Wraps the Google Gemini API call with retry logic and rate limiting handling.
+-   **`image-processing`**: Handles CPU-intensive tasks like cropping and resizing, offloading them from the main server.
 
-## 5. API Endpoints
+## 4. State Management Architecture
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/workflows` | List user's workflows |
-| POST | `/api/workflows` | Create new workflow |
-| GET | `/api/workflows/[id]` | Get workflow by ID |
-| PUT | `/api/workflows/[id]` | Update workflow |
-| DELETE | `/api/workflows/[id]` | Delete workflow |
-| POST | `/api/workflows/[id]/run` | Execute workflow |
-| GET | `/api/workflows/[id]/runs` | Get execution history |
-| POST | `/actions/executeNode` | Single Node Execution (Server Action) |
+### Client-Side Store (Zustand)
+-   **Atomic Updates**: State changes are granular. Moving a node only updates its position, not the entire graph.
+-   **Selectors**: Components subscribe only to the specific slice of state they need, minimizing re-renders.
 
-## 6. Execution Flow
+### Server-Side Actions
+-   **Direct DB Access**: Server Actions bypass the traditional API layer for high-frequency operations like saving node positions, reducing latency.
 
-```
-User clicks "Run" 
-    │
-    ▼
-┌─────────────────────────┐
-│ Create WorkflowRun      │
-│ Status: PENDING         │
-└───────────┬─────────────┘
-            │
-            ▼
-┌─────────────────────────┐
-│ Trigger Orchestrator    │
-│ (Background Task)       │
-└───────────┬─────────────┘
-            │
-            ▼
-┌─────────────────────────┐
-│ Build DAG from Edges    │
-│ Find Executable Nodes   │
-└───────────┬─────────────┘
-            │
-    ┌───────┴───────┐
-    ▼               ▼
-┌─────────┐   ┌─────────┐
-│ Node A  │   │ Node B  │  (Parallel)
-└────┬────┘   └────┬────┘
-     │             │
-     └──────┬──────┘
-            ▼
-┌─────────────────────────┐
-│ Convergence Node        │
-│ (Waits for A & B)       │
-└───────────┬─────────────┘
-            │
-            ▼
-┌─────────────────────────┐
-│ Update WorkflowRun      │
-│ Status: COMPLETED       │
-└─────────────────────────┘
-```
+---
+© 2026 Developed by **Siddharth Nama**
