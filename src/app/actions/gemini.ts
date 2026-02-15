@@ -48,9 +48,11 @@ export async function generateContent(
         }
     } catch (error: unknown) {
         console.error("Gemini API Error:", error);
+        console.log("❌ Full error object:", error);
 
         // Fix: Type-safe error handling
         const errorMessage = error instanceof Error ? error.message : "Unknown error occurred during generation";
+        console.log("❌ Returning error message to client:", errorMessage);
 
         return {
             success: false,
