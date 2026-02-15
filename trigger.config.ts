@@ -7,6 +7,12 @@ export default defineConfig({
   runtime: "node",
   logLevel: "log",
   build: {
+    extensions: [
+      prismaExtension({
+        mode: "legacy",
+        schema: "prisma/schema.prisma",
+      }),
+    ],
     // This tells the bundler: "Skip packaging these, they are already installed"
     external: ["@prisma/client", "prisma", "ffmpeg-static"],
   },
