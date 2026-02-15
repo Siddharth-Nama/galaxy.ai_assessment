@@ -3,8 +3,12 @@ export async function uploadToTransloadit(file: File): Promise<string> {
     const templateId = process.env.NEXT_PUBLIC_TRANSLOADIT_TEMPLATE_ID;
 
     if (!authKey || !templateId) {
+        console.error("❌ Transloadit config missing in .env!");
+        console.log("Current Auth Key:", authKey ? "Found" : "Missing");
+        console.log("Current Template ID:", templateId ? "Found" : "Missing");
         throw new Error("Transloadit configuration missing");
     }
+    console.log("✅ Transloadit config found. Attempting upload...");
 
     const formData = new FormData();
     formData.append("params", JSON.stringify({

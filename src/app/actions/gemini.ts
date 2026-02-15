@@ -10,6 +10,14 @@ export async function generateContent(
     imageUrls: string[] = []
 ) {
     try {
+
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (!apiKey) {
+            console.error("❌ GEMINI_API_KEY is missing in .env!");
+            throw new Error("Google Gemini API key not found");
+        }
+        console.log("✅ Gemini API Key found. Generating content with model:", model);
+
         const geminiModel = genAI.getGenerativeModel({ model });
 
         if (imageUrls.length > 0) {
