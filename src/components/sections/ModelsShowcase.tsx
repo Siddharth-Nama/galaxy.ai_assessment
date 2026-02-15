@@ -110,7 +110,7 @@ export default function ModelsShowcase() {
     >
       <div
         ref={viewportRef}
-        className="sticky top-0 h-screen w-full overflow-hidden"
+        className="sticky top-0 h-screen w-full overflow-hidden z-10"
       >
         <div className="absolute inset-0 z-0">
           <div className="absolute inset-0 bg-black/30 z-10" />
@@ -186,18 +186,16 @@ export default function ModelsShowcase() {
                 {MODELS.map((model, idx) => (
                   <div
                     key={idx}
-                    className={`flex items-center  ${
+                    className={`flex items-center transition-all duration-500 ease-out ${
                       currentModelIndex === idx
-                        ? "text-[#f7ff9e]"
-                        : "text-white"
+                        ? "text-[#f7ff9e] scale-105"
+                        : "text-white/60 hover:text-white hover:scale-105"
                     }`}
                   >
                     <span
-                      className="text-[2.6rem] sm:text-[3.2rem] md:text-[5rem] tracking-tight"
+                      className="text-[2.6rem] sm:text-[3.2rem] md:text-[5rem] tracking-tight cursor-pointer"
                       style={{
                         lineHeight: 1,
-                        color:
-                          currentModelIndex === idx ? "#f7ff9e" : "#ffffff",
                       }}
                     >
                       {model.name}

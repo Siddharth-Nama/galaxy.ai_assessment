@@ -32,7 +32,9 @@ const Header = () => {
 
   return (
     <div
-      className={`navbar_main flex flex-col w-full fixed top-0 left-0 z-[1000] bg-transparent transition-all duration-500 ${navClass}`}
+      className={`navbar_main flex flex-col w-full fixed top-0 left-0 z-[1000] transition-all duration-500 ${
+        hasScrolled ? "bg-black/10 backdrop-blur-md" : "bg-transparent"
+      } ${navClass}`}
     >
       <div className="flex justify-between w-full h-20 border-black/5">
         <div className="pl-0 invert">
