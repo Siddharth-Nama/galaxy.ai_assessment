@@ -164,8 +164,8 @@ export default function WorkflowTransition() {
     <section ref={containerRef} className="h-[250vh] relative bg-[#FBFBFB]">
       <div className="sticky top-0 h-screen w-full overflow-hidden flex flex-col pt-8 md:pt-16">
         {/* --- HEADER --- */}
-        <div className="relative z-40 max-w-[1600px] mx-auto px-6 md:px-16 w-full mb-4 md:mb-8">
-          <p className="text-[13px] md:text-sm text-[#1c1b1b] mb-4 md:mb-6 max-w-[420px]">
+        <div className="relative z-40 max-w-400 mx-auto px-6 md:px-16 w-full mb-4 md:mb-8">
+          <p className="text-[13px] md:text-sm text-[#1c1b1b] mb-4 md:mb-6 max-w-105">
             {workflowAppModeData.heading.subtitle}
           </p>
 
