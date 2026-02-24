@@ -7,6 +7,10 @@ import { tasks, runs } from "@trigger.dev/sdk/v3";
 import type { SaveWorkflowParams } from "@/lib/types";
 import { saveWorkflowSchema } from "@/lib/schemas";
 import { z } from "zod";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+
 
 // Helper to ensure User exists in our DB before acting
 async function ensureUserExists(userId: string) {
@@ -337,57 +341,86 @@ export async function executeNodeAction(nodeType: string, data: any) {
         }
 
         try {
-            // Step 1: Fire the task
-            const handle = await tasks.trigger(taskId, taskPayload);
-            console.log(`[executeNodeAction] Task "${taskId}" triggered. Handle:`, handle.id);
+            let output: any;
 
-            // Step 2: Poll until complete with a manual 60s timeout
-            // ⚠️ Requires `npx trigger.dev@latest dev` to be running in a separate terminal
-            console.log(`[executeNodeAction] Polling task... (requires Trigger.dev dev worker)`);
-            const timeout = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error("Task timed out after 60s. Is `npx trigger.dev@latest dev` running?")), 60_000)
-            );
-            const completedRun = await Promise.race([
-                runs.poll(handle, { pollIntervalMs: 1000 }),
-                timeout,
-            ]) as Awaited<ReturnType<typeof runs.poll>>;
-            console.log(`[executeNodeAction] Poll complete. Status: ${completedRun.status}`);
+            if (nodeType === "llmNode") {
+                // ✅ Call Gemini directly (no Trigger.dev worker needed)
+                console.log(`[executeNodeAction] llmNode: calling Gemini directly. model=${taskPayload.model}`);
+                const modelName = taskPayload.model || "gemini-1.5-flash";
+                const geminiModel = genAI.getGenerativeModel({ model: modelName });
 
-            // Step 3: Check result
-            if (completedRun.output && (completedRun.output as any).success !== false) {
-                await prisma.nodeExecution.update({
-                    where: { id: nodeExecution.id },
-                    data: {
-                        status: "SUCCESS",
-                        finishedAt: new Date(),
-                        outputData: completedRun.output as any
+                const parts: any[] = [];
+
+                let fullText = taskPayload.prompt || "";
+                if (taskPayload.systemPrompt) {
+                    fullText = `System Instructions: ${taskPayload.systemPrompt}\n\nUser Request: ${taskPayload.prompt}`;
+                }
+                parts.push({ text: fullText });
+
+                if (taskPayload.imageUrls && taskPayload.imageUrls.length > 0) {
+                    console.log(`[executeNodeAction] Processing ${taskPayload.imageUrls.length} image(s)...`);
+                    for (const url of taskPayload.imageUrls) {
+                        if (url.startsWith("data:")) {
+                            const base64Data = url.split(",")[1];
+                            const mimeType = url.substring(url.indexOf(":") + 1, url.indexOf(";"));
+                            parts.push({ inlineData: { data: base64Data, mimeType } });
+                        } else {
+                            const resp = await fetch(url);
+                            const mimeType = resp.headers.get("content-type") || "image/jpeg";
+                            const buf = await resp.arrayBuffer();
+                            parts.push({ inlineData: { data: Buffer.from(buf).toString("base64"), mimeType } });
+                        }
                     }
-                });
+                }
 
-                await prisma.workflowRun.update({
-                    where: { id: run.id },
-                    data: { status: "COMPLETED", finishedAt: new Date() }
-                });
+                const result = await geminiModel.generateContent(parts);
+                const text = result.response.text();
+                console.log(`[executeNodeAction] ✅ Gemini responded. Length: ${text.length}`);
+                output = { success: true, text };
 
-                revalidatePath(`/workflows/${workflowId}`);
-                return { success: true, output: completedRun.output };
             } else {
-                throw new Error((completedRun.output as any)?.error || "Task returned failure");
+                // Use Trigger.dev for non-LLM nodes (crop-image, extract-frame)
+                console.log(`[executeNodeAction] Task "${taskId}" triggered via Trigger.dev...`);
+                const handle = await tasks.trigger(taskId, taskPayload);
+                console.log(`[executeNodeAction] Handle:`, handle.id);
+
+                const timeout = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error("Task timed out after 60s. Is `npx trigger.dev@latest dev` running?")), 60_000)
+                );
+                const completedRun = await Promise.race([
+                    runs.poll(handle, { pollIntervalMs: 1000 }),
+                    timeout,
+                ]) as Awaited<ReturnType<typeof runs.poll>>;
+
+                console.log(`[executeNodeAction] Poll complete. Status: ${completedRun.status}`);
+
+                if (!completedRun.output || (completedRun.output as any).success === false) {
+                    throw new Error((completedRun.output as any)?.error || "Task returned failure");
+                }
+                output = completedRun.output;
             }
 
+            // Record success in DB
+            await prisma.nodeExecution.update({
+                where: { id: nodeExecution.id },
+                data: { status: "SUCCESS", finishedAt: new Date(), outputData: output }
+            });
+            await prisma.workflowRun.update({
+                where: { id: run.id },
+                data: { status: "COMPLETED", finishedAt: new Date() }
+            });
+
+            revalidatePath(`/workflows/${workflowId}`);
+            return { success: true, output };
+
         } catch (taskError: any) {
-            console.error("Task Execution Failed:", taskError);
+            console.error("[executeNodeAction] Task Execution Failed:", taskError);
             const errorMessage = taskError.message || "Unknown error";
 
             await prisma.nodeExecution.update({
                 where: { id: nodeExecution.id },
-                data: {
-                    status: "FAILED",
-                    finishedAt: new Date(),
-                    error: errorMessage
-                }
+                data: { status: "FAILED", finishedAt: new Date(), error: errorMessage }
             });
-
             await prisma.workflowRun.update({
                 where: { id: run.id },
                 data: { status: "FAILED", finishedAt: new Date() }
