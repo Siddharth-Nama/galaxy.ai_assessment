@@ -8,7 +8,7 @@ import LoadWorkflowModal from "./LoadWorkflowModal";
 import { WorkflowData } from "@/lib/schemas";
 
 export default function Header() {
-	const { nodes, edges, workflowId, workflowName, setWorkflowId, setWorkflowName, setNodes, setEdges } = useWorkflowStore();
+	const { nodes, edges, workflowId, workflowName, setWorkflowId, setWorkflowName, setNodes, setEdges, updateNodeData } = useWorkflowStore();
 	const [isSaving, setIsSaving] = useState(false);
 	const [isRunning, setIsRunning] = useState(false);
 	const [isLoadOpen, setIsLoadOpen] = useState(false);
@@ -77,7 +77,14 @@ export default function Header() {
 			const res = await saveWorkflowAction({
 				id: workflowId,
 				name: workflowName,
-				nodes,
+				// Strip large ephemeral output fields before saving — prevents 1MB body size error
+				nodes: nodes.map((n) => ({
+					...n,
+					data: (() => {
+						const { outputUrl, outputs, status, errorMessage, ...stable } = n.data as any;
+						return stable;
+					})(),
+				})) as typeof nodes,
 				edges,
 			});
 			console.log("[SAVE] saveWorkflowAction response:", res);
@@ -127,6 +134,14 @@ export default function Header() {
 		currentId = savedId;
 		console.log("[RUN] Step 2: Calling runWorkflowAction with ID:", currentId);
 
+		// Before run: set all non-passive nodes to "loading" so the canvas shows activity immediately
+		const PASSIVE_TYPES = new Set(["textNode", "imageNode", "videoNode"]);
+		nodes.forEach((n) => {
+			if (!PASSIVE_TYPES.has(n.type || "")) {
+				updateNodeData(n.id, { status: "loading" } as any);
+			}
+		});
+
 		try {
 			const res = await runWorkflowAction(currentId);
 			console.log("[RUN] runWorkflowAction response:", res);
@@ -136,12 +151,42 @@ export default function Header() {
 				if (typeof res.runId === "string") {
 					localStorage.setItem("lastRunId", res.runId);
 				}
+				// Apply per-node results to canvas nodes for visual feedback
+				if (res.nodeResults) {
+					res.nodeResults.forEach((nr: any) => {
+						if (nr.status === "success") {
+							updateNodeData(nr.nodeId, {
+								status: "success",
+								// Pass text output for LLM nodes
+								...(nr.text ? { outputs: [{ id: nr.nodeId, type: "text", content: nr.text, timestamp: Date.now() }] } : {}),
+								// Pass image URL for crop/extract nodes (small, not full base64)
+								...(nr.outputUrl ? { outputUrl: nr.outputUrl } : {}),
+							} as any);
+						} else if (nr.status === "error") {
+							updateNodeData(nr.nodeId, { status: "error", errorMessage: nr.error } as any);
+						} else if (nr.status === "skipped") {
+							updateNodeData(nr.nodeId, { status: "error", errorMessage: nr.error || "Skipped" } as any);
+						}
+					});
+				}
 			} else {
 				console.error("[RUN] ❌ runWorkflowAction returned failure:", res.error);
+				// Reset all loading nodes to idle on failure
+				nodes.forEach((n) => {
+					if (!PASSIVE_TYPES.has(n.type || "")) {
+						updateNodeData(n.id, { status: "idle" } as any);
+					}
+				});
 				alert("Run Failed: " + res.error);
 			}
 		} catch (err) {
 			console.error("[RUN] ❌ Exception thrown during runWorkflowAction:", err);
+			// Reset all loading nodes to idle
+			nodes.forEach((n) => {
+				if (!PASSIVE_TYPES.has(n.type || "")) {
+					updateNodeData(n.id, { status: "idle" } as any);
+				}
+			});
 			alert("Error starting run");
 		} finally {
 			console.log("[RUN] Run flow complete. Resetting isRunning.");

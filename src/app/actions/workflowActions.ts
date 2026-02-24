@@ -342,6 +342,8 @@ export async function runWorkflowAction(workflowId: string) {
         // Step 6: Execute layer by layer
         const context: Record<string, { text?: string; imageUrls?: string[]; videoUrl?: string }> = {};
         const PASSIVE_TYPES = new Set(["textNode", "imageNode", "videoNode"]);
+        // Collect per-node results to return to the client for UI status updates
+        const nodeResults: Array<{ nodeId: string; status: "success" | "error" | "skipped"; text?: string; outputUrl?: string; error?: string }> = [];
 
         try {
             for (const [i, layer] of layers.entries()) {
@@ -412,6 +414,7 @@ export async function runWorkflowAction(workflowId: string) {
                             console.log(`[runWorkflowAction] ✅ LLM node ${node.id} done. Response length: ${text.length}`);
 
                             context[node.id] = { text };
+                            nodeResults.push({ nodeId: node.id, status: "success", text });
                             await prisma.nodeExecution.update({
                                 where: { id: execRecord.id },
                                 data: { status: "SUCCESS", finishedAt: new Date(), outputData: { text } }
@@ -454,6 +457,7 @@ export async function runWorkflowAction(workflowId: string) {
 
                             if (!imageUrl) {
                                 console.warn(`[runWorkflowAction] ⚠️ cropImageNode ${node.id}: no image URL found anywhere — skipping`);
+                                nodeResults.push({ nodeId: node.id, status: "skipped", error: "No image available." });
                                 await prisma.nodeExecution.update({
                                     where: { id: execRecord.id },
                                     data: { status: "FAILED", finishedAt: new Date(), error: "No image available. Add an Image node to the workflow." }
@@ -470,6 +474,7 @@ export async function runWorkflowAction(workflowId: string) {
                                 node.data.heightPercent ?? 100
                             );
                             context[node.id] = { imageUrls: [dataUrl] };
+                            nodeResults.push({ nodeId: node.id, status: "success", outputUrl: dataUrl });
                             await prisma.nodeExecution.update({
                                 where: { id: execRecord.id },
                                 data: { status: "SUCCESS", finishedAt: new Date(), outputData: { url: dataUrl } }
@@ -494,6 +499,7 @@ export async function runWorkflowAction(workflowId: string) {
                             }
                             if (!videoUrl) {
                                 console.warn(`[runWorkflowAction] ⚠️ extractFrameNode ${node.id}: no video URL found — skipping`);
+                                nodeResults.push({ nodeId: node.id, status: "skipped", error: "No input video connected." });
                                 await prisma.nodeExecution.update({
                                     where: { id: execRecord.id },
                                     data: { status: "FAILED", finishedAt: new Date(), error: "No input video connected." }
@@ -503,6 +509,7 @@ export async function runWorkflowAction(workflowId: string) {
                             console.log(`[runWorkflowAction] extractFrameNode ${node.id}: extracting frame...`);
                             const dataUrl = await extractFrameInline(videoUrl, node.data.timestamp ?? 0);
                             context[node.id] = { imageUrls: [dataUrl] };
+                            nodeResults.push({ nodeId: node.id, status: "success", outputUrl: dataUrl });
                             await prisma.nodeExecution.update({
                                 where: { id: execRecord.id },
                                 data: { status: "SUCCESS", finishedAt: new Date(), outputData: { url: dataUrl } }
@@ -518,6 +525,7 @@ export async function runWorkflowAction(workflowId: string) {
                         }
                     } catch (nodeError: any) {
                         console.error(`[runWorkflowAction] ❌ Node ${node.id} failed (continuing run):`, nodeError.message);
+                        nodeResults.push({ nodeId: node.id, status: "error", error: nodeError.message });
                         await prisma.nodeExecution.update({
                             where: { id: execRecord.id },
                             data: { status: "FAILED", finishedAt: new Date(), error: nodeError.message }
@@ -543,7 +551,7 @@ export async function runWorkflowAction(workflowId: string) {
         }
 
         revalidatePath(`/workflows/${numericId}`);
-        return { success: true, runId: run.id };
+        return { success: true, runId: run.id, nodeResults };
 
     } catch (error) {
         console.error("[runWorkflowAction] ❌ CRITICAL FAILURE:", error);
