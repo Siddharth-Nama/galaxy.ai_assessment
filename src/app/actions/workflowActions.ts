@@ -402,13 +402,41 @@ export async function runWorkflowAction(workflowId: string) {
                             });
                         } else if (node.type === "cropImageNode") {
                             const incomingEdges = edges.filter((e: any) => e.target === node.id);
-                            let imageUrl = node.data.imageUrl;
+                            // Debug dump — tells us exactly what data and edges are present
+                            console.log(`[runWorkflowAction] cropImageNode ${node.id} data:`, JSON.stringify(node.data));
+                            console.log(`[runWorkflowAction] cropImageNode ${node.id} incomingEdges:`, JSON.stringify(incomingEdges));
+                            console.log(`[runWorkflowAction] context keys:`, Object.keys(context));
+
+                            // Check all possible field names the image URL could be stored under
+                            let imageUrl: string | undefined =
+                                node.data.imageUrl ||
+                                node.data.file?.url ||
+                                node.data.image ||
+                                node.data.inputImageUrl ||
+                                node.data.url ||
+                                undefined;
+
+                            // Fall back to context from connected edges
                             for (const edge of incomingEdges) {
                                 const src = context[edge.source];
-                                if (src?.imageUrls?.[0]) { imageUrl = src.imageUrls[0]; break; }
+                                console.log(`[runWorkflowAction]   edge from ${edge.source} (handle: ${edge.targetHandle}), src context:`, src);
+                                if (!imageUrl && src?.imageUrls?.[0]) {
+                                    imageUrl = src.imageUrls[0];
+                                    console.log(`[runWorkflowAction]   Found image URL from context edge: ${imageUrl?.substring(0, 60)}`);
+                                    break;
+                                }
                             }
-                            if (!imageUrl) throw new Error("cropImageNode: no input image URL");
-                            console.log(`[runWorkflowAction] cropImageNode ${node.id}: cropping...`);
+
+                            if (!imageUrl) {
+                                console.warn(`[runWorkflowAction] ⚠️ cropImageNode ${node.id}: no image URL found — skipping (connect an imageNode to this node's image_url handle)`);
+                                await prisma.nodeExecution.update({
+                                    where: { id: execRecord.id },
+                                    data: { status: "FAILED", finishedAt: new Date(), error: "No input image connected. Connect an Image node to the crop node's input handle." }
+                                });
+                                return; // Skip gracefully — don't fail the whole run
+                            }
+
+                            console.log(`[runWorkflowAction] cropImageNode ${node.id}: cropping image of length ${imageUrl.length}...`);
                             const dataUrl = await cropImageInline(
                                 imageUrl,
                                 node.data.xPercent ?? 0,
@@ -425,12 +453,23 @@ export async function runWorkflowAction(workflowId: string) {
 
                         } else if (node.type === "extractFrameNode") {
                             const incomingEdges = edges.filter((e: any) => e.target === node.id);
-                            let videoUrl = node.data.videoUrl;
+                            let videoUrl: string | undefined =
+                                node.data.videoUrl ||
+                                node.data.file?.url ||
+                                node.data.url ||
+                                undefined;
                             for (const edge of incomingEdges) {
                                 const src = context[edge.source];
-                                if (src?.videoUrl) { videoUrl = src.videoUrl; break; }
+                                if (!videoUrl && src?.videoUrl) { videoUrl = src.videoUrl; break; }
                             }
-                            if (!videoUrl) throw new Error("extractFrameNode: no input video URL");
+                            if (!videoUrl) {
+                                console.warn(`[runWorkflowAction] ⚠️ extractFrameNode ${node.id}: no video URL found — skipping`);
+                                await prisma.nodeExecution.update({
+                                    where: { id: execRecord.id },
+                                    data: { status: "FAILED", finishedAt: new Date(), error: "No input video connected." }
+                                });
+                                return;
+                            }
                             console.log(`[runWorkflowAction] extractFrameNode ${node.id}: extracting frame...`);
                             const dataUrl = await extractFrameInline(videoUrl, node.data.timestamp ?? 0);
                             context[node.id] = { imageUrls: [dataUrl] };
