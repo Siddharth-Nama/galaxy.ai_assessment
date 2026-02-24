@@ -325,29 +325,29 @@ export async function runWorkflowAction(workflowId: string) {
 
         // Step 6: Execute layer by layer
         const context: Record<string, { text?: string; imageUrls?: string[]; videoUrl?: string }> = {};
+        const PASSIVE_TYPES = new Set(["textNode", "imageNode", "videoNode"]);
 
         try {
             for (const [i, layer] of layers.entries()) {
                 console.log(`[runWorkflowAction] Layer ${i + 1}: ${layer.length} nodes`);
 
-                await Promise.all(layer.map(async (node: any) => {
-                    // Passive nodes — just pass data through context
+                // Phase A: Passive nodes — run synchronously first so context is ready for active nodes
+                for (const node of layer) {
                     if (node.type === "textNode") {
                         context[node.id] = { text: node.data.text };
-                        return;
-                    }
-                    if (node.type === "imageNode") {
+                    } else if (node.type === "imageNode") {
                         const url = node.data.file?.url || node.data.image;
                         if (url) context[node.id] = { imageUrls: [url] };
-                        return;
-                    }
-                    if (node.type === "videoNode") {
+                    } else if (node.type === "videoNode") {
                         const url = node.data.file?.url;
                         if (url) context[node.id] = { videoUrl: url };
-                        return;
                     }
+                }
 
-                    // Active nodes — create DB record and run
+                // Phase B: Active nodes — run in parallel (context is already populated)
+                const activeNodes = layer.filter((n: any) => !PASSIVE_TYPES.has(n.type));
+                await Promise.all(activeNodes.map(async (node: any) => {
+
                     const execRecord = await prisma.nodeExecution.create({
                         data: { runId: run.id, nodeId: node.id, nodeType: node.type, status: "RUNNING", startedAt: new Date(), inputData: node.data }
                     });
