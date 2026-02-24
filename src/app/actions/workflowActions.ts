@@ -339,9 +339,16 @@ export async function executeNodeAction(nodeType: string, data: any) {
         try {
             // Step 1: Fire the task
             const handle = await tasks.trigger(taskId, taskPayload);
+            console.log(`[executeNodeAction] Task "${taskId}" triggered. Handle:`, handle.id);
 
-            // Step 2: Poll until complete
-            const completedRun = await runs.poll(handle, { pollIntervalMs: 500 });
+            // Step 2: Poll until complete (60s timeout)
+            // ⚠️ Requires `npx trigger.dev@latest dev` to be running in a separate terminal
+            console.log(`[executeNodeAction] Polling task... (requires Trigger.dev dev worker)`);
+            const completedRun = await runs.poll(handle, {
+                pollIntervalMs: 500,
+                signal: AbortSignal.timeout(60_000), // 60 second timeout
+            });
+            console.log(`[executeNodeAction] Poll complete. Status: ${completedRun.status}`);
 
             // Step 3: Check result
             if (completedRun.output && (completedRun.output as any).success !== false) {
