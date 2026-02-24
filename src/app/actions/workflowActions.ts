@@ -218,7 +218,6 @@ export async function runWorkflowAction(workflowId: string) {
         const { userId } = await auth();
         console.log(`[runWorkflowAction] Auth userId: ${userId}`);
         if (!userId) {
-            console.error("[runWorkflowAction] ❌ No userId — user is not authenticated");
             return { success: false, error: "Unauthorized" };
         }
 
@@ -226,34 +225,171 @@ export async function runWorkflowAction(workflowId: string) {
         const numericId = parseInt(workflowId);
         console.log(`[runWorkflowAction] Parsed numericId: ${numericId}`);
         if (isNaN(numericId)) {
-            console.error(`[runWorkflowAction] ❌ Invalid Workflow ID: "${workflowId}" — NaN after parseInt`);
             return { success: false, error: "Invalid Workflow ID. Please save the file first." };
         }
 
-        // Step 3: Create the PENDING run record in DB
-        console.log(`[runWorkflowAction] Creating WorkflowRun DB record for workflowId: ${numericId}...`);
+        // Step 3: Load workflow from DB
+        const workflow = await prisma.workflow.findUnique({
+            where: { id: numericId, userId },
+        });
+        if (!workflow) return { success: false, error: "Workflow not found." };
+
+        const graph = workflow.data as any;
+        const nodes: any[] = graph.nodes || [];
+        const edges: any[] = graph.edges || [];
+        console.log(`[runWorkflowAction] Loaded workflow. Nodes: ${nodes.length}, Edges: ${edges.length}`);
+
+        // Step 4: Create run record
         const run = await prisma.workflowRun.create({
-            data: {
-                workflowId: numericId,
-                status: "PENDING",
-                triggerType: "MANUAL",
-            },
+            data: { workflowId: numericId, status: "RUNNING", triggerType: "MANUAL", startedAt: new Date() },
         });
         console.log(`[runWorkflowAction] ✅ WorkflowRun created! run.id: "${run.id}"`);
 
-        // Step 4: Trigger the orchestrator task
-        console.log(`[runWorkflowAction] Triggering Trigger.dev task "workflow-orchestrator" with runId: "${run.id}"`);
-        await tasks.trigger("workflow-orchestrator", { runId: run.id });
-        console.log(`[runWorkflowAction] ✅ Trigger.dev task dispatched successfully`);
+        // Step 5: Topological sort → execution layers
+        const inDegree = new Map<string, number>();
+        const adj = new Map<string, string[]>();
+        nodes.forEach((n) => { inDegree.set(n.id, 0); adj.set(n.id, []); });
+        edges.forEach((e) => {
+            if (adj.has(e.source) && adj.has(e.target)) {
+                adj.get(e.source)!.push(e.target);
+                inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
+            }
+        });
+        const layers: any[][] = [];
+        let queue = [...inDegree.entries()].filter(([, d]) => d === 0).map(([id]) => id);
+        while (queue.length > 0) {
+            const currentIds = [...queue];
+            queue = [];
+            layers.push(currentIds.map(id => nodes.find(n => n.id === id)).filter(Boolean));
+            for (const id of currentIds) {
+                for (const neighbor of adj.get(id) || []) {
+                    inDegree.set(neighbor, (inDegree.get(neighbor) || 0) - 1);
+                    if (inDegree.get(neighbor) === 0) queue.push(neighbor);
+                }
+            }
+        }
+        console.log(`[runWorkflowAction] Execution layers: ${layers.length}`);
 
+        // Step 6: Execute layer by layer
+        const context: Record<string, { text?: string; imageUrls?: string[]; videoUrl?: string }> = {};
+
+        try {
+            for (const [i, layer] of layers.entries()) {
+                console.log(`[runWorkflowAction] Layer ${i + 1}: ${layer.length} nodes`);
+
+                await Promise.all(layer.map(async (node: any) => {
+                    // Passive nodes — just pass data through context
+                    if (node.type === "textNode") {
+                        context[node.id] = { text: node.data.text };
+                        return;
+                    }
+                    if (node.type === "imageNode") {
+                        const url = node.data.file?.url || node.data.image;
+                        if (url) context[node.id] = { imageUrls: [url] };
+                        return;
+                    }
+                    if (node.type === "videoNode") {
+                        const url = node.data.file?.url;
+                        if (url) context[node.id] = { videoUrl: url };
+                        return;
+                    }
+
+                    // Active nodes — create DB record and run
+                    const execRecord = await prisma.nodeExecution.create({
+                        data: { runId: run.id, nodeId: node.id, nodeType: node.type, status: "RUNNING", startedAt: new Date(), inputData: node.data }
+                    });
+
+                    try {
+                        if (node.type === "llmNode") {
+                            // Gather inputs from context
+                            const incomingEdges = edges.filter((e: any) => e.target === node.id);
+                            let systemText = "";
+                            let userText = node.data.prompt || "Analyze this.";
+                            const imageUrls: string[] = [];
+
+                            for (const edge of incomingEdges) {
+                                const src = context[edge.source];
+                                if (!src) continue;
+                                if (src.text) {
+                                    if (edge.targetHandle === "system-prompt") systemText += src.text;
+                                    else userText = src.text;
+                                }
+                                if (src.imageUrls) imageUrls.push(...src.imageUrls);
+                            }
+
+                            // Build parts and call Gemini directly
+                            const modelName = node.data.model || "gemini-1.5-flash";
+                            console.log(`[runWorkflowAction] LLM node ${node.id}: model=${modelName}, images=${imageUrls.length}`);
+                            const geminiModel = genAI.getGenerativeModel({ model: modelName });
+                            const parts: any[] = [];
+                            let fullText = systemText ? `System: ${systemText}\n\nUser: ${userText}` : userText;
+                            parts.push({ text: fullText });
+
+                            for (const url of imageUrls) {
+                                if (url.startsWith("data:")) {
+                                    const base64Data = url.split(",")[1];
+                                    const mimeType = url.substring(url.indexOf(":") + 1, url.indexOf(";"));
+                                    parts.push({ inlineData: { data: base64Data, mimeType } });
+                                } else {
+                                    const resp = await fetch(url);
+                                    const mimeType = resp.headers.get("content-type") || "image/jpeg";
+                                    const buf = await resp.arrayBuffer();
+                                    parts.push({ inlineData: { data: Buffer.from(buf).toString("base64"), mimeType } });
+                                }
+                            }
+
+                            const result = await geminiModel.generateContent(parts);
+                            const text = result.response.text();
+                            console.log(`[runWorkflowAction] ✅ LLM node ${node.id} done. Response length: ${text.length}`);
+
+                            context[node.id] = { text };
+                            await prisma.nodeExecution.update({
+                                where: { id: execRecord.id },
+                                data: { status: "SUCCESS", finishedAt: new Date(), outputData: { text } }
+                            });
+                        } else {
+                            // cropImageNode / extractFrameNode — still need Trigger.dev worker
+                            console.warn(`[runWorkflowAction] ⚠️ Node type "${node.type}" requires Trigger.dev worker (skipping in direct mode)`);
+                            await prisma.nodeExecution.update({
+                                where: { id: execRecord.id },
+                                data: { status: "FAILED", finishedAt: new Date(), error: `Node type "${node.type}" requires Trigger.dev worker` }
+                            });
+                        }
+                    } catch (nodeError: any) {
+                        console.error(`[runWorkflowAction] ❌ Node ${node.id} failed:`, nodeError);
+                        await prisma.nodeExecution.update({
+                            where: { id: execRecord.id },
+                            data: { status: "FAILED", finishedAt: new Date(), error: nodeError.message }
+                        });
+                        throw nodeError;
+                    }
+                }));
+            }
+
+            // All layers done
+            await prisma.workflowRun.update({
+                where: { id: run.id },
+                data: { status: "COMPLETED", finishedAt: new Date() }
+            });
+            console.log(`[runWorkflowAction] ✅ Workflow run COMPLETED`);
+
+        } catch (runError: any) {
+            console.error(`[runWorkflowAction] ❌ Workflow run FAILED:`, runError);
+            await prisma.workflowRun.update({
+                where: { id: run.id },
+                data: { status: "FAILED", finishedAt: new Date() }
+            });
+        }
+
+        revalidatePath(`/workflows/${numericId}`);
         return { success: true, runId: run.id };
 
     } catch (error) {
         console.error("[runWorkflowAction] ❌ CRITICAL FAILURE:", error);
-        console.log("[runWorkflowAction] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
         return { success: false, error: "Failed to run workflow. Check server logs." };
     }
 }
+
 
 // ------------------------------------------------------------------
 // EXECUTE SINGLE NODE ACTION (Trigger.dev)
