@@ -163,7 +163,14 @@ export const useWorkflowStore = create<WorkflowState>()(
                 // Partition storage by user ID
                 partialize: (state) => ({
                     userId: state.userId,
-                    nodes: state.nodes,
+                    nodes: state.nodes.map((node) => ({
+                        ...node,
+                        data: (() => {
+                            // Strip large/ephemeral runtime fields — never persist base64 images or outputs to localStorage
+                            const { outputUrl, outputs, status, errorMessage, ...stableData } = node.data as any;
+                            return stableData;
+                        })(),
+                    })),
                     edges: state.edges,
                     workflowId: state.workflowId,
                     workflowName: state.workflowName,

@@ -3,7 +3,6 @@
 import React, {useEffect, useRef, useState} from "react";
 import {X, Clock, ChevronRight, ChevronDown, Loader2, CheckCircle2, XCircle} from "lucide-react";
 import {getWorkflowHistoryAction} from "@/app/actions/historyActions";
-import {useWorkflowStore} from "@/store/workflowStore";
 import {cn} from "@/lib/utils";
 
 interface HistorySidebarProps {
@@ -16,7 +15,6 @@ export default function HistorySidebar({workflowId, isOpen, onClose}: HistorySid
 	const [runs, setRuns] = useState<any[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
-	const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
 	const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
 	useEffect(() => {
@@ -35,27 +33,8 @@ export default function HistorySidebar({workflowId, isOpen, onClose}: HistorySid
 
 				const latestRun = res.runs[0];
 				if (latestRun) {
-					latestRun.nodes.forEach((execNode: any) => {
-						if (execNode.status === "SUCCESS" && execNode.output) {
-							updateNodeData(execNode.nodeId, {
-								status: "success",
-								outputs: [
-									{
-										id: execNode.id,
-										type: "text",
-										content: execNode.output.text || JSON.stringify(execNode.output),
-										timestamp: Date.now(),
-									},
-								],
-							});
-						} else if (execNode.status === "FAILED") {
-							updateNodeData(execNode.nodeId, {status: "error", errorMessage: execNode.error});
-						} else if (execNode.status === "RUNNING") {
-							updateNodeData(execNode.nodeId, {status: "loading"});
-						}
-					});
-
-					// Stop polling if run is finished
+					// Stop polling if run is finished — do NOT write output back to the store
+					// (writing large base64 outputUrls back to the store causes localStorage quota errors)
 					if (latestRun.status === "COMPLETED" || latestRun.status === "FAILED") {
 						if (intervalRef.current) {
 							clearInterval(intervalRef.current);
@@ -81,7 +60,7 @@ export default function HistorySidebar({workflowId, isOpen, onClose}: HistorySid
 				intervalRef.current = null;
 			}
 		};
-	}, [workflowId, isOpen, updateNodeData]);
+	}, [workflowId, isOpen]);
 
 	if (!isOpen) return null;
 
