@@ -22,7 +22,7 @@ export const aiGenerator = task({
 
         console.log(`🤖 [Worker] Starting AI Task using model: ${modelName}`);
         console.log(`   - Prompt length: ${payload.prompt.length}`);
-        console.log(`   - Images: ${payload.imageUrls?.length || 0}`);
+        console.log(`   - Images received: ${payload.imageUrls?.length || 0}`);
 
         const model = genAI.getGenerativeModel({ model: modelName });
 
@@ -39,36 +39,42 @@ export const aiGenerator = task({
 
             // Add Images
             if (payload.imageUrls && payload.imageUrls.length > 0) {
-                for (const url of payload.imageUrls) {
+                for (let i = 0; i < payload.imageUrls.length; i++) {
+                    const url = payload.imageUrls[i];
+                    console.log(`[Worker] Processing image[${i}]: "${url.substring(0, 50)}..."`);
+
                     // Handle Base64
                     if (url.startsWith("data:")) {
                         const base64Data = url.split(",")[1];
                         const mimeType = url.substring(url.indexOf(":") + 1, url.indexOf(";"));
-                        parts.push({
-                            inlineData: {
-                                data: base64Data,
-                                mimeType: mimeType
-                            }
-                        });
+                        console.log(`[Worker] image[${i}] → base64, mimeType: ${mimeType}, data length: ${base64Data?.length}`);
+                        parts.push({ inlineData: { data: base64Data, mimeType } });
                     }
                     // Handle Remote URLs (fetch them)
                     else {
+                        console.log(`[Worker] image[${i}] → remote URL, fetching...`);
                         const resp = await fetch(url);
+                        if (!resp.ok) {
+                            console.error(`[Worker] ❌ Failed to fetch image[${i}]: ${resp.status} ${resp.statusText}`);
+                            throw new Error(`Failed to fetch image: ${resp.statusText}`);
+                        }
+                        // Use actual content-type from response instead of hardcoding image/jpeg
+                        const mimeType = resp.headers.get("content-type") || "image/jpeg";
                         const buf = await resp.arrayBuffer();
-                        parts.push({
-                            inlineData: {
-                                data: Buffer.from(buf).toString("base64"),
-                                mimeType: "image/jpeg"
-                            }
-                        });
+                        const base64Data = Buffer.from(buf).toString("base64");
+                        console.log(`[Worker] image[${i}] → fetched OK, mimeType: ${mimeType}, base64 length: ${base64Data.length}`);
+                        parts.push({ inlineData: { data: base64Data, mimeType } });
                     }
                 }
             }
+
+            console.log(`[Worker] Sending ${parts.length} parts to Gemini (1 text + ${parts.length - 1} images)...`);
 
             // Execute Gemini
             const result = await model.generateContent(parts);
             const response = await result.response;
             const text = response.text();
+            console.log(`[Worker] ✅ Gemini responded successfully. Response length: ${text.length}`);
 
             return {
                 success: true,
@@ -76,7 +82,7 @@ export const aiGenerator = task({
             };
 
         } catch (error) {
-            console.error(`[Worker] Gemini Failed:`, error);
+            console.error(`[Worker] ❌ Gemini Failed:`, error);
             throw error; // Throwing allows Trigger.dev to show it as "Failed" in dashboard
         }
     },
