@@ -8,8 +8,61 @@ import type { SaveWorkflowParams } from "@/lib/types";
 import { saveWorkflowSchema } from "@/lib/schemas";
 import { z } from "zod";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import sharp from "sharp";
+import ffmpegPath from "ffmpeg-static";
+import { exec } from "child_process";
+import fs from "fs/promises";
+import os from "os";
+import path from "path";
+import { promisify } from "util";
 
+const execAsync = promisify(exec);
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+
+// ---- Inline Crop Image (sharp — no Trigger.dev needed) ----
+async function cropImageInline(
+    imageUrl: string,
+    xPercent: number,
+    yPercent: number,
+    widthPercent: number,
+    heightPercent: number
+): Promise<string> {
+    console.log(`[cropImageInline] Fetching image: ${imageUrl.substring(0, 80)}`);
+    const resp = await fetch(imageUrl);
+    if (!resp.ok) throw new Error(`Failed to fetch image: ${resp.statusText}`);
+    const buffer = Buffer.from(await resp.arrayBuffer());
+
+    const img = sharp(buffer);
+    const meta = await img.metadata();
+    const W = meta.width || 100;
+    const H = meta.height || 100;
+
+    const left   = Math.round(W * xPercent / 100);
+    const top    = Math.round(H * yPercent / 100);
+    const width  = Math.round(W * widthPercent / 100);
+    const height = Math.round(H * heightPercent / 100);
+
+    console.log(`[cropImageInline] Cropping ${W}x${H} → left:${left} top:${top} w:${width} h:${height}`);
+    const cropped = await img.extract({ left, top, width, height }).png().toBuffer();
+    const base64 = cropped.toString("base64");
+    console.log(`[cropImageInline] ✅ Done. Output base64 length: ${base64.length}`);
+    return `data:image/png;base64,${base64}`;
+}
+
+// ---- Inline Extract Frame (ffmpeg-static — no Trigger.dev needed) ----
+async function extractFrameInline(videoUrl: string, timestamp: number): Promise<string> {
+    console.log(`[extractFrameInline] Extracting frame at ${timestamp}s from: ${videoUrl.substring(0, 80)}`);
+    const tmpDir = os.tmpdir();
+    const outputPath = path.join(tmpDir, `frame-${Date.now()}.jpg`);
+    const bin = ffmpegPath || "ffmpeg";
+
+    await execAsync(`"${bin}" -y -ss ${timestamp} -i "${videoUrl}" -frames:v 1 -q:v 2 "${outputPath}"`);
+    const buf = await fs.readFile(outputPath);
+    const base64 = buf.toString("base64");
+    await fs.unlink(outputPath).catch(() => {});
+    console.log(`[extractFrameInline] ✅ Done. Output base64 length: ${base64.length}`);
+    return `data:image/jpeg;base64,${base64}`;
+}
 
 
 // Helper to ensure User exists in our DB before acting
@@ -347,12 +400,51 @@ export async function runWorkflowAction(workflowId: string) {
                                 where: { id: execRecord.id },
                                 data: { status: "SUCCESS", finishedAt: new Date(), outputData: { text } }
                             });
-                        } else {
-                            // cropImageNode / extractFrameNode — still need Trigger.dev worker
-                            console.warn(`[runWorkflowAction] ⚠️ Node type "${node.type}" requires Trigger.dev worker (skipping in direct mode)`);
+                        } else if (node.type === "cropImageNode") {
+                            const incomingEdges = edges.filter((e: any) => e.target === node.id);
+                            let imageUrl = node.data.imageUrl;
+                            for (const edge of incomingEdges) {
+                                const src = context[edge.source];
+                                if (src?.imageUrls?.[0]) { imageUrl = src.imageUrls[0]; break; }
+                            }
+                            if (!imageUrl) throw new Error("cropImageNode: no input image URL");
+                            console.log(`[runWorkflowAction] cropImageNode ${node.id}: cropping...`);
+                            const dataUrl = await cropImageInline(
+                                imageUrl,
+                                node.data.xPercent ?? 0,
+                                node.data.yPercent ?? 0,
+                                node.data.widthPercent ?? 100,
+                                node.data.heightPercent ?? 100
+                            );
+                            context[node.id] = { imageUrls: [dataUrl] };
                             await prisma.nodeExecution.update({
                                 where: { id: execRecord.id },
-                                data: { status: "FAILED", finishedAt: new Date(), error: `Node type "${node.type}" requires Trigger.dev worker` }
+                                data: { status: "SUCCESS", finishedAt: new Date(), outputData: { url: dataUrl } }
+                            });
+                            console.log(`[runWorkflowAction] ✅ cropImageNode ${node.id} done`);
+
+                        } else if (node.type === "extractFrameNode") {
+                            const incomingEdges = edges.filter((e: any) => e.target === node.id);
+                            let videoUrl = node.data.videoUrl;
+                            for (const edge of incomingEdges) {
+                                const src = context[edge.source];
+                                if (src?.videoUrl) { videoUrl = src.videoUrl; break; }
+                            }
+                            if (!videoUrl) throw new Error("extractFrameNode: no input video URL");
+                            console.log(`[runWorkflowAction] extractFrameNode ${node.id}: extracting frame...`);
+                            const dataUrl = await extractFrameInline(videoUrl, node.data.timestamp ?? 0);
+                            context[node.id] = { imageUrls: [dataUrl] };
+                            await prisma.nodeExecution.update({
+                                where: { id: execRecord.id },
+                                data: { status: "SUCCESS", finishedAt: new Date(), outputData: { url: dataUrl } }
+                            });
+                            console.log(`[runWorkflowAction] ✅ extractFrameNode ${node.id} done`);
+
+                        } else {
+                            console.warn(`[runWorkflowAction] ⚠️ Unknown node type "${node.type}" — skipping`);
+                            await prisma.nodeExecution.update({
+                                where: { id: execRecord.id },
+                                data: { status: "FAILED", finishedAt: new Date(), error: `Unknown node type: ${node.type}` }
                             });
                         }
                     } catch (nodeError: any) {
@@ -514,26 +606,28 @@ export async function executeNodeAction(nodeType: string, data: any) {
                 console.log(`[executeNodeAction] ✅ Gemini responded. Length: ${text.length}`);
                 output = { success: true, text };
 
-            } else {
-                // Use Trigger.dev for non-LLM nodes (crop-image, extract-frame)
-                console.log(`[executeNodeAction] Task "${taskId}" triggered via Trigger.dev...`);
-                const handle = await tasks.trigger(taskId, taskPayload);
-                console.log(`[executeNodeAction] Handle:`, handle.id);
-
-                const timeout = new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error("Task timed out after 60s. Is `npx trigger.dev@latest dev` running?")), 60_000)
+            } else if (nodeType === "cropImageNode") {
+                // ✅ Call sharp directly (no Trigger.dev worker needed)
+                console.log(`[executeNodeAction] cropImageNode: cropping inline...`);
+                const dataUrl = await cropImageInline(
+                    taskPayload.imageUrl,
+                    taskPayload.x ?? 0,
+                    taskPayload.y ?? 0,
+                    taskPayload.width ?? 100,
+                    taskPayload.height ?? 100
                 );
-                const completedRun = await Promise.race([
-                    runs.poll(handle, { pollIntervalMs: 1000 }),
-                    timeout,
-                ]) as Awaited<ReturnType<typeof runs.poll>>;
+                console.log(`[executeNodeAction] ✅ cropImageNode done`);
+                output = { success: true, url: dataUrl };
 
-                console.log(`[executeNodeAction] Poll complete. Status: ${completedRun.status}`);
+            } else if (nodeType === "extractFrameNode") {
+                // ✅ Call ffmpeg-static directly (no Trigger.dev worker needed)
+                console.log(`[executeNodeAction] extractFrameNode: extracting frame inline...`);
+                const dataUrl = await extractFrameInline(taskPayload.videoUrl, taskPayload.timestamp ?? 0);
+                console.log(`[executeNodeAction] ✅ extractFrameNode done`);
+                output = { success: true, url: dataUrl };
 
-                if (!completedRun.output || (completedRun.output as any).success === false) {
-                    throw new Error((completedRun.output as any)?.error || "Task returned failure");
-                }
-                output = completedRun.output;
+            } else {
+                throw new Error(`Unknown node type: ${nodeType}`);
             }
 
             // Record success in DB
