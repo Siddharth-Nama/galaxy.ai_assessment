@@ -352,11 +352,6 @@ export async function executeNodeAction(nodeType: string, data: any) {
                 timeout,
             ]) as Awaited<ReturnType<typeof runs.poll>>;
             console.log(`[executeNodeAction] Poll complete. Status: ${completedRun.status}`);
-            const completedRun = await runs.poll(handle, {
-                pollIntervalMs: 500,
-                signal: AbortSignal.timeout(60_000), // 60 second timeout
-            });
-            console.log(`[executeNodeAction] Poll complete. Status: ${completedRun.status}`);
 
             // Step 3: Check result
             if (completedRun.output && (completedRun.output as any).success !== false) {
