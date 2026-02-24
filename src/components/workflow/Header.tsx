@@ -60,7 +60,12 @@ export default function Header() {
 
 	// --- HANDLE SAVE ---
 	const handleSave = async () => {
+		console.log("[SAVE] 🟡 Save triggered");
+		console.log("[SAVE] workflowId:", workflowId, "| workflowName:", workflowName);
+		console.log("[SAVE] nodes.length:", nodes.length, "| edges.length:", edges.length);
+
 		if (nodes.length === 0) {
+			console.warn("[SAVE] ⚠️ Canvas is empty — aborting save");
 			alert("Canvas is empty!");
 			return null;
 		}
@@ -68,29 +73,34 @@ export default function Header() {
 		setIsSaving(true);
 
 		try {
+			console.log("[SAVE] Calling saveWorkflowAction...");
 			const res = await saveWorkflowAction({
 				id: workflowId,
 				name: workflowName,
 				nodes,
 				edges,
 			});
+			console.log("[SAVE] saveWorkflowAction response:", res);
 
 			if (res.success && res.id) {
+				console.log("[SAVE] ✅ Saved successfully! New workflowId:", res.id);
 				setWorkflowId(res.id);
-				// Optional: Toast notification here
 				return res.id;
 			} else if (res.success) {
+				console.warn("[SAVE] ⚠️ Saved but no ID returned");
 				alert("Saved, but no ID returned.");
 				return null;
 			} else {
+				console.error("[SAVE] ❌ Save failed with error:", res.error);
 				alert(`Error: ${res.error}`);
 				return null;
 			}
 		} catch (error) {
-			console.error(error);
+			console.error("[SAVE] ❌ Exception thrown during saveWorkflowAction:", error);
 			return null;
 		} finally {
 			setIsSaving(false);
+			console.log("[SAVE] Save flow complete.");
 		}
 	};
 

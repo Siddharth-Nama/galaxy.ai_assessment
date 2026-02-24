@@ -33,68 +33,61 @@ async function ensureUserExists(userId: string) {
 // SAVE ACTION
 // ------------------------------------------------------------------
 export async function saveWorkflowAction(params: SaveWorkflowParams) {
+    console.log(`[saveWorkflowAction] 🟡 Called with id: "${params.id}", name: "${params.name}", nodes: ${params.nodes?.length}, edges: ${params.edges?.length}`);
     try {
         const user = await currentUser();
+        console.log(`[saveWorkflowAction] Clerk currentUser: ${user?.id ?? "null"}`);
         if (!user) {
+            console.error("[saveWorkflowAction] ❌ No user — Unauthorized");
             return { success: false, error: "Unauthorized" };
         }
 
         // Validate Input using Zod
         const result = saveWorkflowSchema.safeParse(params);
         if (!result.success) {
-            console.error("Validation Error:", result.error.format());
-            // Zod v3 uses .issues or .errors. If TS complains about .errors, we can map .issues.
+            console.error("[saveWorkflowAction] ❌ Zod validation failed:", result.error.format());
             const firstError = result.error.issues[0];
             return { success: false, error: "Invalid workflow data: " + firstError.message };
         }
+        console.log("[saveWorkflowAction] ✅ Zod validation passed");
 
         const { id, name, nodes, edges } = result.data;
 
+        console.log(`[saveWorkflowAction] Ensuring user "${user.id}" exists in DB...`);
         await ensureUserExists(user.id);
+        console.log(`[saveWorkflowAction] ✅ ensureUserExists done`);
 
-        // Prepare JSON data
-        // We cast to 'any' because Prisma's InputJsonValue is stricter than 
-        // our complex Node types, even though they are valid JSON at runtime.
         const workflowData = { nodes, edges };
 
         if (id) {
             // UPDATE Existing
-            console.log(`Updating Workflow ID: ${id}`);
-
             const numericId = typeof id === "string" ? parseInt(id) : id;
+            console.log(`[saveWorkflowAction] Updating Workflow ID: ${numericId}`);
             if (!numericId) return { success: false, error: "Invalid Workflow ID" };
 
             const workflow = await prisma.workflow.update({
-                where: {
-                    id: numericId,
-                    userId: user.id,
-                },
-                data: {
-                    name,
-                    data: workflowData as any,
-                },
+                where: { id: numericId, userId: user.id },
+                data: { name, data: workflowData as any },
             });
+            console.log(`[saveWorkflowAction] ✅ Updated! workflow.id: ${workflow.id}`);
 
             revalidatePath("/workflows");
             return { success: true, id: workflow.id.toString() };
         } else {
             // CREATE New
-            console.log(`Creating New Workflow for: ${user.id}`);
+            console.log(`[saveWorkflowAction] Creating new workflow for user: ${user.id}`);
 
             const workflow = await prisma.workflow.create({
-                data: {
-                    name,
-                    data: workflowData as any,
-                    userId: user.id,
-                },
+                data: { name, data: workflowData as any, userId: user.id },
             });
+            console.log(`[saveWorkflowAction] ✅ Created! workflow.id: ${workflow.id}`);
 
-            console.log(`[Action] Created Workflow with ID: ${workflow.id}`);
             revalidatePath("/workflows");
             return { success: true, id: workflow.id.toString() };
         }
     } catch (error) {
-        console.error("Database Error:", error);
+        console.error("[saveWorkflowAction] ❌ Database Error:", error);
+        console.log("[saveWorkflowAction] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
         return { success: false, error: "Failed to save workflow." };
     }
 }
