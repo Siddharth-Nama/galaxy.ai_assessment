@@ -402,12 +402,8 @@ export async function runWorkflowAction(workflowId: string) {
                             });
                         } else if (node.type === "cropImageNode") {
                             const incomingEdges = edges.filter((e: any) => e.target === node.id);
-                            // Debug dump — tells us exactly what data and edges are present
-                            console.log(`[runWorkflowAction] cropImageNode ${node.id} data:`, JSON.stringify(node.data));
-                            console.log(`[runWorkflowAction] cropImageNode ${node.id} incomingEdges:`, JSON.stringify(incomingEdges));
-                            console.log(`[runWorkflowAction] context keys:`, Object.keys(context));
 
-                            // Check all possible field names the image URL could be stored under
+                            // Tier 1: direct data fields on the node itself
                             let imageUrl: string | undefined =
                                 node.data.imageUrl ||
                                 node.data.file?.url ||
@@ -416,27 +412,40 @@ export async function runWorkflowAction(workflowId: string) {
                                 node.data.url ||
                                 undefined;
 
-                            // Fall back to context from connected edges
-                            for (const edge of incomingEdges) {
-                                const src = context[edge.source];
-                                console.log(`[runWorkflowAction]   edge from ${edge.source} (handle: ${edge.targetHandle}), src context:`, src);
-                                if (!imageUrl && src?.imageUrls?.[0]) {
-                                    imageUrl = src.imageUrls[0];
-                                    console.log(`[runWorkflowAction]   Found image URL from context edge: ${imageUrl?.substring(0, 60)}`);
-                                    break;
+                            // Tier 2: explicitly connected edges → context
+                            if (!imageUrl) {
+                                for (const edge of incomingEdges) {
+                                    const src = context[edge.source];
+                                    if (src?.imageUrls?.[0]) {
+                                        imageUrl = src.imageUrls[0];
+                                        console.log(`[runWorkflowAction] cropImageNode: found URL from connected edge (${edge.source})`);
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // Tier 3: fallback — scan ALL context entries for any imageUrl
+                            // (handles case where image node is in same layer but not explicitly wired)
+                            if (!imageUrl) {
+                                for (const [ctxId, ctxVal] of Object.entries(context)) {
+                                    if (ctxVal.imageUrls?.[0]) {
+                                        imageUrl = ctxVal.imageUrls[0];
+                                        console.log(`[runWorkflowAction] cropImageNode: auto-resolved image from context[${ctxId}] (no direct edge)`);
+                                        break;
+                                    }
                                 }
                             }
 
                             if (!imageUrl) {
-                                console.warn(`[runWorkflowAction] ⚠️ cropImageNode ${node.id}: no image URL found — skipping (connect an imageNode to this node's image_url handle)`);
+                                console.warn(`[runWorkflowAction] ⚠️ cropImageNode ${node.id}: no image URL found anywhere — skipping`);
                                 await prisma.nodeExecution.update({
                                     where: { id: execRecord.id },
-                                    data: { status: "FAILED", finishedAt: new Date(), error: "No input image connected. Connect an Image node to the crop node's input handle." }
+                                    data: { status: "FAILED", finishedAt: new Date(), error: "No image available. Add an Image node to the workflow." }
                                 });
-                                return; // Skip gracefully — don't fail the whole run
+                                return; // Skip gracefully
                             }
 
-                            console.log(`[runWorkflowAction] cropImageNode ${node.id}: cropping image of length ${imageUrl.length}...`);
+                            console.log(`[runWorkflowAction] cropImageNode ${node.id}: cropping...`);
                             const dataUrl = await cropImageInline(
                                 imageUrl,
                                 node.data.xPercent ?? 0,
@@ -450,6 +459,11 @@ export async function runWorkflowAction(workflowId: string) {
                                 data: { status: "SUCCESS", finishedAt: new Date(), outputData: { url: dataUrl } }
                             });
                             console.log(`[runWorkflowAction] ✅ cropImageNode ${node.id} done`);
+
+
+
+
+
 
                         } else if (node.type === "extractFrameNode") {
                             const incomingEdges = edges.filter((e: any) => e.target === node.id);
