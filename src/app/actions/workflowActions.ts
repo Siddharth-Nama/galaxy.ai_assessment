@@ -214,25 +214,27 @@ export async function deleteWorkflowAction(id: string) {
 // RUN ACTION (Trigger.dev)
 // ------------------------------------------------------------------
 export async function runWorkflowAction(workflowId: string) {
-    console.log(`[Action] Attempting to run workflow: "${workflowId}"`);
+    console.log(`[runWorkflowAction] 🟡 Called with workflowId: "${workflowId}"`);
 
     try {
+        // Step 1: Authenticate
         const { userId } = await auth();
+        console.log(`[runWorkflowAction] Auth userId: ${userId}`);
         if (!userId) {
-            console.error("[Action] User not found");
+            console.error("[runWorkflowAction] ❌ No userId — user is not authenticated");
             return { success: false, error: "Unauthorized" };
         }
 
-        // 1. Validate ID
+        // Step 2: Validate ID
         const numericId = parseInt(workflowId);
+        console.log(`[runWorkflowAction] Parsed numericId: ${numericId}`);
         if (isNaN(numericId)) {
-            console.error(`[Action] Invalid Workflow ID: ${workflowId}`);
+            console.error(`[runWorkflowAction] ❌ Invalid Workflow ID: "${workflowId}" — NaN after parseInt`);
             return { success: false, error: "Invalid Workflow ID. Please save the file first." };
         }
 
-        // 2. Create the PENDING record
-        console.log(`[Action] Creating DB Record for ID: ${numericId}...`);
-
+        // Step 3: Create the PENDING run record in DB
+        console.log(`[runWorkflowAction] Creating WorkflowRun DB record for workflowId: ${numericId}...`);
         const run = await prisma.workflowRun.create({
             data: {
                 workflowId: numericId,
@@ -240,19 +242,18 @@ export async function runWorkflowAction(workflowId: string) {
                 triggerType: "MANUAL",
             },
         });
+        console.log(`[runWorkflowAction] ✅ WorkflowRun created! run.id: "${run.id}"`);
 
-        console.log(`[Action] Run Created! Run ID: ${run.id}`);
-
-        // 3. Trigger the Task
-        console.log(`[Action] Triggering Orchestrator...`);
-        await tasks.trigger("workflow-orchestrator", {
-            runId: run.id,
-        });
+        // Step 4: Trigger the orchestrator task
+        console.log(`[runWorkflowAction] Triggering Trigger.dev task "workflow-orchestrator" with runId: "${run.id}"`);
+        await tasks.trigger("workflow-orchestrator", { runId: run.id });
+        console.log(`[runWorkflowAction] ✅ Trigger.dev task dispatched successfully`);
 
         return { success: true, runId: run.id };
 
     } catch (error) {
-        console.error("[Action] CRITICAL FAILURE:", error); // This will show the real error
+        console.error("[runWorkflowAction] ❌ CRITICAL FAILURE:", error);
+        console.log("[runWorkflowAction] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
         return { success: false, error: "Failed to run workflow. Check server logs." };
     }
 }

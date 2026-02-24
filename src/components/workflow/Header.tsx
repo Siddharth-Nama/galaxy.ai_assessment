@@ -96,38 +96,45 @@ export default function Header() {
 
 	// --- HANDLE RUN ---
 	const handleRun = async () => {
+		console.log("[RUN] 🟡 Run button clicked");
+		console.log("[RUN] Current workflowId from store:", workflowId);
+		console.log("[RUN] Nodes on canvas:", nodes.length, "Edges:", edges.length);
+
 		setIsRunning(true);
 		let currentId = workflowId;
 
 		// 1. Force Save First to ensure DB has latest graph
+		console.log("[RUN] Step 1: Auto-saving workflow before run...");
 		const savedId = await handleSave();
+		console.log("[RUN] Save result - savedId:", savedId);
 
 		// If save failed, abort run
 		if (!savedId) {
+			console.error("[RUN] ❌ Save failed or returned no ID. Aborting run.");
 			setIsRunning(false);
 			return;
 		}
 		currentId = savedId;
-
-		// 2. Run the workflow on the server
-		console.log("Running workflow with ID:", currentId);
+		console.log("[RUN] Step 2: Calling runWorkflowAction with ID:", currentId);
 
 		try {
 			const res = await runWorkflowAction(currentId);
-			if (res.success) {
-				console.log(`Workflow run started! Run ID: ${res.runId}`);
+			console.log("[RUN] runWorkflowAction response:", res);
 
+			if (res.success) {
+				console.log(`[RUN] ✅ Workflow run started! Run ID: ${res.runId}`);
 				if (typeof res.runId === "string") {
 					localStorage.setItem("lastRunId", res.runId);
 				}
-
 			} else {
+				console.error("[RUN] ❌ runWorkflowAction returned failure:", res.error);
 				alert("Run Failed: " + res.error);
 			}
 		} catch (err) {
-			console.error(err);
+			console.error("[RUN] ❌ Exception thrown during runWorkflowAction:", err);
 			alert("Error starting run");
 		} finally {
+			console.log("[RUN] Run flow complete. Resetting isRunning.");
 			setIsRunning(false);
 		}
 	};
