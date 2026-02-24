@@ -54,11 +54,27 @@ async function extractFrameInline(videoUrl: string, timestamp: number): Promise<
     console.log(`[extractFrameInline] Extracting frame at ${timestamp}s from: ${videoUrl.substring(0, 80)}`);
     const tmpDir = os.tmpdir();
     const outputPath = path.join(tmpDir, `frame-${Date.now()}.jpg`);
-    const bin = ffmpegPath || "ffmpeg";
+
+    // Resolve ffmpeg binary — Turbopack virtualizes ESM imports and strips the drive letter on Windows.
+    // Build the path from process.cwd() to always get the real absolute path.
+    let bin: string;
+    const cwdFfmpeg = path.join(process.cwd(), 'node_modules', 'ffmpeg-static',
+        process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+    const cwdFfmpegExists = await fs.access(cwdFfmpeg).then(() => true).catch(() => false);
+    if (cwdFfmpegExists) {
+        bin = cwdFfmpeg;
+        console.log(`[extractFrameInline] Using ffmpeg from cwd: ${bin}`);
+    } else if (ffmpegPath && !ffmpegPath.startsWith('\\ROOT')) {
+        bin = ffmpegPath;
+        console.log(`[extractFrameInline] Using ffmpeg from import: ${bin}`);
+    } else {
+        bin = 'ffmpeg'; // fallback to system ffmpeg
+        console.log(`[extractFrameInline] Falling back to system ffmpeg`);
+    }
 
     await execAsync(`"${bin}" -y -ss ${timestamp} -i "${videoUrl}" -frames:v 1 -q:v 2 "${outputPath}"`);
     const buf = await fs.readFile(outputPath);
-    const base64 = buf.toString("base64");
+    const base64 = buf.toString('base64');
     await fs.unlink(outputPath).catch(() => {});
     console.log(`[extractFrameInline] ✅ Done. Output base64 length: ${base64.length}`);
     return `data:image/jpeg;base64,${base64}`;
@@ -501,12 +517,12 @@ export async function runWorkflowAction(workflowId: string) {
                             });
                         }
                     } catch (nodeError: any) {
-                        console.error(`[runWorkflowAction] ❌ Node ${node.id} failed:`, nodeError);
+                        console.error(`[runWorkflowAction] ❌ Node ${node.id} failed (continuing run):`, nodeError.message);
                         await prisma.nodeExecution.update({
                             where: { id: execRecord.id },
                             data: { status: "FAILED", finishedAt: new Date(), error: nodeError.message }
-                        });
-                        throw nodeError;
+                        }).catch(() => {});
+                        return; // Skip this node — don't kill the whole run
                     }
                 }));
             }
